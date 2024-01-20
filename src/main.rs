@@ -12,10 +12,9 @@ use std::path::PathBuf;
 use base64::Engine;
 use base64::engine::general_purpose;
 use clap::{Parser, Subcommand};
-use crypto::scrypt::ScryptParams;
 use fernet::Fernet;
-use password_hash::SaltString;
 use rand::rngs::OsRng;
+use scrypt::{Params, password_hash::SaltString};
 use serde::{Serialize, Deserialize};
 use anyhow;
 
@@ -88,7 +87,7 @@ fn write_file(path: PathBuf, contents: String) -> Result<(), anyhow::Error> {
 
 fn create_fernet(password: String, salt: String) -> Option<Fernet> {
     let mut out = vec![0u8;32];
-    let _res = crypto::scrypt::scrypt(password.as_bytes(), salt.as_bytes(), &ScryptParams::new(16, 8, 1), &mut out);
+    let _res = scrypt::scrypt(password.as_bytes(), salt.as_bytes(), &Params::new(16, 8, 1, 32).unwrap(), &mut out);
 
     let key = general_purpose::URL_SAFE.encode(&out);
 

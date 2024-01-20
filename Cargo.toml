@@ -1,0 +1,29 @@
+[package]
+name = "turt"
+version = "0.1.0"
+edition = "2021"
+authors = ["benpski"]
+description = "Simple command-line password manager"
+homepage = "https://github.com/BenPski/turt"
+categories = ["command-line-utilities"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+crate-type = ["lib"]
+
+[[bin]]
+name = "turt"
+path = "src/main.rs"
+
+[dependencies]
+rand = "0.8.5"
+clap = { version = "4.4.11", features = ["derive"] }
+rpassword = "7.3.1"
+serde = { version = "1.0.195", features = ["derive"] }
+serde_json = "1.0.111"
+dirs = "5.0.1"
+fernet = "0.2.1"
+anyhow = "1.0.79"
+rust-crypto = "0.2.36"
+base64 = "0.21.7"
+password-hash = "0.5.0"

@@ -4,19 +4,17 @@
  * want to be able to handle those dumb contraints that are added on
  */
 
-pub mod random;
+pub mod password;
+pub mod vault;
+pub mod utils;
 
 use std::fs;
-use std::collections::HashMap;
-use std::path::PathBuf;
-use base64::Engine;
-use base64::engine::general_purpose;
+use arboard::Clipboard;
 use clap::{Parser, Subcommand};
-use fernet::Fernet;
-use rand::rngs::OsRng;
-use scrypt::{Params, password_hash::SaltString};
-use serde::{Serialize, Deserialize};
+use password::{Password, generic, Choice};
 use anyhow;
+use utils::config_dir;
+use vault::Vault;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about=None)]
@@ -39,182 +37,61 @@ enum Commands {
 }
 
 #[derive(Debug, Parser)]
+#[command(about="Get an entry from a vault, passwords are copied to clipboard")]
 struct GetCommand {
-    #[arg(short, long, default_value="default")]
+    #[arg(short, long, default_value="default", help="The vault to access")]
     vault: String,
+    #[arg(help="The entry to get the information for")]
     entry: String,
 }
 
 #[derive(Debug, Parser)]
+#[command(about="Add a username and password to the vault. Password is either specified manually or given a specification and generated automatically")]
 struct AddCommand {
-    #[arg(short, long, default_value="default")]
+    #[arg(short, long, default_value="default", help="The vault to access")]
     vault: String,
+    #[arg(help="The entry to add")]
     entry: String,
+    #[arg(help="The username for the entry")]
     username: String,
-    password: String,
+    #[arg(help="(Optional) Manually specified password if not generating the password")]
+    password: Option<String>,
+    #[arg(long, help="the allowed characters for the generated password, defaults to a reasonable group of ascii characters")]
+    allowed: Option<String>,
+    #[arg(long, default_value_t=32, help="length of the generated password")]
+    length: u32,
+    #[arg(long, help="pattern for the generated password (a subset of 'digit+upper+lower+alpha+symbol')")]
+    pattern: Option<String>,
 }
 
 #[derive(Debug, Parser)]
+#[command(about="Remove an entry from a vault")]
 struct RemoveCommand {
-    #[arg(short, long, default_value="default")]
+    #[arg(short, long, default_value="default", help="The vault to access")]
     vault: String,
+    #[arg(help="The entry to remove")]
     entry: String,
 }
 
 #[derive(Debug, Parser)]
+#[command(about="Create a new vault")]
 struct CreateCommand {
-    #[arg(default_value="default")]
+    #[arg(default_value="default", help="The vault to delete")]
     vault: String,
 }
 
 #[derive(Debug, Parser)]
+#[command(about="Delete a vault")]
 struct DeleteCommand {
+    #[arg(help="The vault to delete")]
     vault: String,
 }
 
 #[derive(Debug, Parser)]
+#[command(about="Either list the existing vaults or the entries in a vault")]
 struct ListCommand {
+    #[arg(help="The vault to access")]
     vault: Option<String>,
-}
-
-fn write_file(path: PathBuf, contents: String) -> Result<(), anyhow::Error> {
-    if let Some(p) = path.parent() {
-        fs::create_dir_all(p)?;
-    }
-    fs::write(path, contents)?;
-    Ok(())
-}
-
-fn create_fernet(password: String, salt: String) -> Option<Fernet> {
-    let mut out = vec![0u8;32];
-    let _res = scrypt::scrypt(password.as_bytes(), salt.as_bytes(), &Params::new(16, 8, 1, 32).unwrap(), &mut out);
-
-    let key = general_purpose::URL_SAFE.encode(&out);
-
-    fernet::Fernet::new(&key)
-}
-
-fn write_encrypted(fernet: Fernet, path: PathBuf, data: VaultData) -> Result<(), anyhow::Error> {
-    let content = serde_json::to_string(&data)?;
-    let encrypted = fernet.encrypt(content.as_bytes());
-    let res = write_file(path, encrypted)?;
-    Ok(res)
-}
-
-fn read_encrypted(fernet: Fernet, path: PathBuf) -> Result<VaultData, anyhow::Error> {
-    let content = fs::read_to_string(path)?;
-    let decrypted = fernet.decrypt(&content)?;
-    let str = String::from_utf8(decrypted)?;
-    let val = serde_json::from_str(&str)?;
-    Ok(val)
-}
-
-
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
-struct VaultData {
-    data: HashMap<String, HashMap<String, String>>,
-}
-
-impl VaultData {
-    fn new() -> Self {
-        VaultData {data: HashMap::new()}
-    }
-
-    fn add(&mut self, entry: String, value: HashMap<String, String>) {
-        self.data.insert(entry, value);
-    }
-
-    fn delete(&mut self, entry: &str) -> Option<HashMap<String, String>> {
-        self.data.remove(entry)
-    }
-
-    fn get(&self, entry: &str) -> Option<&HashMap<String, String>> {
-        self.data.get(entry)
-    }
-
-    fn entries(&self) -> Vec<String> {
-        self.data.clone().into_keys().collect()
-    }
-}
-
-#[derive(Clone)]
-struct Vault {
-    id: String,
-    path: PathBuf,
-    fernet: Fernet,
-    data: VaultData,
-}
-
-impl Vault {
-    fn new(id: String, password: String) -> Result<Vault, anyhow::Error> {
-        let mut dir = config_dir();
-        dir.push(id.clone());
-        let mut data_file = dir.clone();
-        data_file.push("data");
-        data_file.set_extension("json");
-
-        let mut salt_file = dir.clone();
-        salt_file.push("salt");
-        salt_file.set_extension("txt");
-
-        let salt = fs::read_to_string(salt_file)?;
-
-        let fernet = create_fernet(password.to_string(), salt.to_string()).expect("Failed to setup encryption");
-        let data = read_encrypted(fernet.clone(), data_file.clone())?; 
-        Ok(Vault { id, path: data_file, fernet, data })
-    }
-
-    fn create(id: String, password: String) -> Result<Vault, anyhow::Error> {
-        let mut dir = config_dir();
-        dir.push(id.clone());
-        let mut data_file = dir.clone();
-        data_file.push("data");
-        data_file.set_extension("json");
-
-        let mut salt_file = dir.clone();
-        salt_file.push("salt");
-        salt_file.set_extension("txt");
-
-        let salt = SaltString::generate(&mut OsRng); 
-        write_file(salt_file, salt.to_string())?;
-
-        let fernet = create_fernet(password.to_string(), salt.to_string()).expect("Failed to setup encryption");
-        let data = VaultData::new();
-        let vault = Vault { id, path: data_file, fernet, data };
-        vault.write()?;
-        Ok(vault)
-    }
-
-    fn get(&self, entry: &str) -> Option<&HashMap<String, String>> {
-        self.data.get(entry)
-    }
-
-    fn set(&mut self, entry: String, username: String, password: String) -> Result<(), anyhow::Error> {
-        let mut val = HashMap::new();
-        val.insert("username".to_string(), username);
-        val.insert("password".to_string(), password);
-        self.data.add(entry, val);
-        self.write()
-    }
-
-    fn remove(&mut self, entry: &str) -> Result<(), anyhow::Error> {
-        self.data.delete(entry);
-        self.write()
-    }
-
-    fn entries(&self) -> Vec<String> {
-        self.data.entries()
-    }
-
-    fn write(&self) -> Result<(), anyhow::Error> {
-        write_encrypted(self.fernet.clone(), self.path.clone(), self.data.clone())
-    }
-}
-
-fn config_dir() -> PathBuf {
-    let mut path = dirs::home_dir().expect("No home directory, not sure what to do");
-    path.push(".turt");
-    path
 }
 
 fn list_vaults() -> Result<Vec<String>, anyhow::Error> {
@@ -231,16 +108,17 @@ fn list_vaults() -> Result<Vec<String>, anyhow::Error> {
     Ok(list)
 }
 
-fn main() {
-    /*
-    let x : Uppercase = rand::random();
-    println!("{:?}", x);
-    let y : Lowercase = rand::random();
-    println!("{:?}", y);
-    let z : Digit = rand::random();
-    println!("{:?}", z);
-    */
+fn new_vault(vault: String) -> Vault {
+    let password = rpassword::prompt_password("Vault password: ").expect("Prompting for password failed");
+    match Vault::new(vault.clone(), password) {
+        Ok(v) => v,
+        Err(e) => {
+            panic!("Error decrypting vault {}: {:?}", vault, e);
+        }
+    }
+}
 
+fn main() {
     // just always make sure .turt exists
     let _ = fs::create_dir_all(config_dir());
 
@@ -264,79 +142,74 @@ fn main() {
             }
         }
         Commands::Delete(data) => {
-            let password = rpassword::prompt_password("Vault password: ").expect("Prompting for password failed");
-            match Vault::new(data.vault.clone(), password) {
-                Ok(vault) => {
-                    let _ = fs::remove_dir_all(vault.path.clone());
-                    println!("Removed vault: {:?}", vault.path);
-                }
-                Err(e) => {
-                    println!("Error decrypting vault: {:?}", e);
-                }
-            }
+            let vault = new_vault(data.vault.clone());
+            let _ = fs::remove_dir_all(vault.path.clone());
+            println!("Removed vault: {:?}", vault.path);
         }
         Commands::Get(data) => {
-            let password = rpassword::prompt_password("Vault password: ").expect("Prompting for password failed");
-           
-            match Vault::new(data.vault.clone(), password) {
-                Ok(vault) => {
-                    if let Some(info) = vault.get(&data.entry) {
-                        for (key, value) in info.iter() {
-                            println!("{}: {}", key, value);
-                        }
+            let vault = new_vault(data.vault.clone());
+            if let Some(info) = vault.get(&data.entry) {
+                for (key, value) in info.iter() {
+                    if key == "password" {
+                        let mut clipboard = Clipboard::new().unwrap();
+                        clipboard.set_text(value.to_string()).unwrap();
+                        println!("Password: {}", value.to_string());
                     } else {
-                        println!("No entry for {}", data.entry);
+                        println!("{}: {}", key, value);
                     }
                 }
-                Err(e) => {
-                    println!("Error decrypting vault: {:?}", e);
-                }
+            } else {
+                println!("No entry for {}", data.entry);
             }
         }
         Commands::Add(data) => {
-            let password = rpassword::prompt_password("Vault password: ").expect("Prompting for password failed");
-            match Vault::new(data.vault.clone(), password) {
-                Ok(mut vault) => {
-                    if let Ok(_info) = vault.set(data.entry.clone(), data.username.clone(), data.password.clone()) {
+            let mut vault = new_vault(data.vault.clone());
+            match &data.password {
+                Some(p) => {
+                    if let Ok(_info) = vault.set(data.entry.clone(), data.username.clone(), p.clone()) {
                         println!("Created new entry for {}", data.entry)
                     } else {
                         println!("Failed to create entry for {}", data.entry);
                     }
                 }
-                Err(e) => {
-                    println!("Error decrypting vault: {:?}", e);
-                }
-            }
-
-        }
-        Commands::Remove(data) => {
-            let password = rpassword::prompt_password("Vault password: ").expect("Prompting for password failed");
-            match Vault::new(data.vault.clone(), password) {
-                Ok(mut vault) => {
-                    if let Ok(_info) = vault.remove(&data.entry) {
-                        println!("Removed entry {}", data.entry)
+                None => {
+                    let length = data.length;
+                    let allowed = match &data.allowed {
+                        Some(chars) => Choice::new(chars.chars().collect()).unwrap(),
+                        None => generic(),
+                    };
+                    let pattern = data.pattern.clone().unwrap_or("".to_string());
+                    if let Some(spec) = Password::from_spec(allowed, length, pattern.clone()) {
+                        if let Ok(_info) = vault.set_password(data.entry.clone(), data.username.clone(), spec) {
+                            println!("Created new entry for {}", data.entry)
+                        } else {
+                            println!("Failed to create entry for {}", data.entry);
+                        }
                     } else {
-                        println!("Failed to remove entry {}", data.entry);
+                        println!("Invalid password specification");
                     }
                 }
-                Err(e) => {
-                    println!("Error decrypting vault: {:?}", e);
-                }
+            }
+        }
+        Commands::Remove(data) => {
+            let mut vault = new_vault(data.vault.clone());
+            if let Ok(_info) = vault.remove(&data.entry) {
+                println!("Removed entry {}", data.entry)
+            } else {
+                println!("Failed to remove entry {}", data.entry);
             }
         }
         Commands::List(data) => {
             match &data.vault {
                 Some(name) => {
-                    let password = rpassword::prompt_password("Vault password: ").expect("Prompting for password failed");
-                    match Vault::new(name.to_string(), password) {
-                        Ok(vault) => {
-                            println!("Entries in {}:", vault.id);
-                            for item in vault.entries() {
-                                println!(" - {}", item);
-                            }
-                        }
-                        Err(e) => {
-                            println!("Error decrypting vault: {:?}", e);
+                    let vault = new_vault(name.to_string());
+                    let entries = vault.entries();
+                    if entries.len() == 0 {
+                        println!("No entries for {} yet", vault.id);
+                    } else {
+                        println!("Entries in {}:", vault.id);
+                        for item in vault.entries() {
+                            println!(" - {}", item);
                         }
                     }
                 }

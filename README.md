@@ -1,28 +1,52 @@
 # turt
 
-A simple manager for vaults that encrypt your data. Every vault has a master
-password and a series of entries that stores some data.
+A simple CLI password manager.
 
-The goal of this was to think about how to approach the situation of someone
-getting access to your computer or device because you left it unlocked or something.
-In most cases a password manager or something that stores secure data usually 
-leaves you logged in or stoes the data in memory so the other person could
-very easily get this data if they wanted to. Well, to get around this you always
-prompt for the password and have both the master password and the derived
-encryption key be cleared from memory and that is what I was attempting here.
+The manager has multiple vaults and each vault has multiple entries.
 
-In reality, if someone is getting access to your computer or device and they
-want to do something malicious you are pretty hosed anyways. This has potential
-to be a step up in security, but it is less convenient on the user side since
-it requires that the passwords never be remembered.
+Base idea is that you always have to provide the master password for a transaction.
+Motivation is because if you don't either your master password or the encryption
+key can be left in memory and be used for decrypting the entire vault.
+
+`turt` can generate a randomized password for you or you can specify an existing
+password.
+
+## usage
+
+Note: everything acts on the `default` vault when a vault id isn't specified.
+
+Create an initial vault
+```
+$ turt create
+```
+
+Add an entry to the vault. In this case `super_cool_place` with the username
+`myself` and have the password be automatically generated.
+```
+$ turt add super_cool_place myself
+```
+
+Get the credentials for `super_cool_place`.
+```
+$ turt get super_cool_place
+```
+
+In case it is necessary, allows for specifying things like password restrictions
+like requiring a digit, symbol, and uppercase character. Often this will happen
+just through randomness, but nice to guarantee it.
+
+For a password with a length of 20 that requires a number, symbol, and uppercase
+letter:
+```
+$ turt add with_rules username --pattern "digit+symbol+upper" --length 20
+```
 
 ## status
 
-Right now this is a prototype and is primarily intended to be used with the
-accompanying [browser extension](https://github.com/BenPski/turt-extension).
+Current major todos:
 
-Can use the cli as a CRUD application, but it isn't too fully featured.
-
-Has some workings for things like password rotations or configuring rules about
-generating passwords.
+-[] clipboard functionality isn't working on my machine right now
+-[] the rust `scrypt` implementation is really slow relative to `openssl`'s implementation
+making this annoying to use
+-[] running as a server for networked connections
 

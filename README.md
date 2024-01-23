@@ -46,7 +46,5 @@ $ turt add with_rules username --pattern "digit+symbol+upper" --length 20
 Current major todos:
 
 -[] clipboard functionality isn't working on my machine right now
--[] the rust `scrypt` implementation is really slow relative to `openssl`'s implementation
-making this annoying to use
 -[] running as a server for networked connections
 

@@ -40,11 +40,3 @@ letter:
 ```
 $ turt add with_rules username --pattern "digit+symbol+upper" --length 20
 ```
-
-## status
-
-Current major todos:
-
--[] clipboard functionality isn't working on my machine right now
--[] running as a server for networked connections
-

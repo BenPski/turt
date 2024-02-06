@@ -8,8 +8,9 @@ pub mod password;
 pub mod vault;
 pub mod utils;
 
-use std::fs;
-use arboard::Clipboard;
+use core::time;
+use std::{fs, thread};
+use arboard::{Clipboard, SetExtLinux};
 use clap::{Parser, Subcommand};
 use password::{Password, generic, Choice};
 use anyhow;
@@ -43,6 +44,8 @@ struct GetCommand {
     vault: String,
     #[arg(help="The entry to get the information for")]
     entry: String,
+    #[arg(short, long, default_value_t=10, help="How long to hold the password in the clipboard for")]
+    duration: u64,
 }
 
 #[derive(Debug, Parser)]
@@ -150,12 +153,30 @@ fn main() {
             let vault = new_vault(data.vault.clone());
             if let Some(info) = vault.get(&data.entry) {
                 for (key, value) in info.iter() {
-                    if key == "password" {
-                        let mut clipboard = Clipboard::new().unwrap();
-                        clipboard.set_text(value.to_string()).unwrap();
-                        println!("Password: {}", value.to_string());
-                    } else {
+                    if key != "password" {
                         println!("{}: {}", key, value);
+                    }
+                }
+                if let Some(password) = info.get("password") {
+                    let dur = data.duration;
+                    let mut threads = vec![];
+                    let mut clip = Clipboard::new().unwrap();
+                    let orig = clip.get_text().unwrap_or("".to_string());
+                    let p = password.clone();
+                    threads.push(thread::spawn(move || {
+                        println!("Copying password to clipboard for {} seconds.", dur);
+                        let _ = Clipboard::new().unwrap().set().wait().text(p.to_string());
+                    }));
+                    threads.push(thread::spawn(move || {
+                        let wait_time = time::Duration::from_millis(dur*1000);
+                        thread::sleep(wait_time);
+                        let _ = Clipboard::new().unwrap().set_text(orig);
+                        // lol, whatever
+                        let wait_time = time::Duration::from_millis(1000);
+                        thread::sleep(wait_time);
+                    }));
+                    for t in threads {
+                        let _ = t.join();
                     }
                 }
             } else {
